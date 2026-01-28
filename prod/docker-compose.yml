@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  ping-monitor:
+    image: ghcr.io/vbychkovskyi/ping-monitor:latest
+    container_name: ping-monitor
+    ports:
+      - "8089:8080"
+    restart: unless-stopped
