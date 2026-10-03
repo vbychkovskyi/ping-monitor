@@ -1,0 +1,6 @@
+# Build output
+/ping-monitor
+/uptime-monitor
+
+# IDE
+.idea/
