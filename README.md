@@ -34,6 +34,8 @@ With Docker, building from source (exposed on host port `8088`):
 docker compose up --build
 ```
 
+The image is built `FROM scratch` and contains only the static binary (~5.6 MB), running as `nobody`.
+
 In production, using the published image `ghcr.io/vbychkovskyi/ping-monitor:latest` (exposed on host port `8089`):
 
 ```sh
@@ -44,7 +46,7 @@ docker compose -f prod/docker-compose.yml up -d
 
 Each attempt runs two checks at the same time, with a 1s timeout:
 
-- ICMP ping, using the system `ping` binary (the container image installs `iputils`), so the service doesn't need raw sockets and runs as a non-root user.
+- ICMP ping, sent from Go over an unprivileged ICMP datagram socket, so it needs neither root nor a `ping` binary. On Linux the process's group must be allowed by `net.ipv4.ping_group_range`; Docker allows all groups by default (but not with `network_mode: host`, where the host's setting applies).
 - A TCP connection to port `6668`, the Tuya local-protocol port. The connection is closed immediately; no login is needed.
 
 The host is UP as soon as either check succeeds. If both fail, the service waits 300ms and tries again, up to 3 attempts, so a single delayed Wi-Fi reply doesn't cause a false DOWN. Tuya devices accept only a few local connections at once, so don't poll more often than every 30–60s.

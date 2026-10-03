@@ -1,31 +1,29 @@
+# syntax=docker/dockerfile:1
+
 # ---------- build stage ----------
-FROM golang:1.25-alpine AS builder
+# Runs on the build host's architecture and cross-compiles, so multi-arch builds don't need emulation.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+ARG TARGETOS TARGETARCH
 
-WORKDIR /app
+WORKDIR /src
 
-# Required for ping at runtime
-RUN apk add --no-cache ca-certificates
-
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o uptime-monitor
+COPY *.go ./
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags="-s -w" -o /ping-monitor .
 
 
 # ---------- runtime stage ----------
-FROM alpine:3.19
+# The static binary needs nothing else: ping uses an ICMP datagram socket, and no TLS is involved.
+FROM scratch
 
-# ping + certs
-RUN apk add --no-cache iputils ca-certificates
+COPY --from=builder /ping-monitor /ping-monitor
 
-WORKDIR /app
-COPY --from=builder /app/uptime-monitor .
-
-# Non-root user
-RUN adduser -D appuser
-USER appuser
+# nobody:nogroup
+USER 65534:65534
 
 EXPOSE 8080
 
-CMD ["./uptime-monitor"]
+ENTRYPOINT ["/ping-monitor"]

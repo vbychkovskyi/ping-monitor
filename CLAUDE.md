@@ -9,7 +9,8 @@ A single-file Go HTTP service (`main.go`, stdlib only, no dependencies) that rep
 - `GET /health?ip=<host>` → `200 {"status":"UP"}`, `503 {"status":"DOWN"}`, `400` if `ip` is missing.
 - Listens on `:8080` (hardcoded).
 - Each attempt (`probe`) runs ICMP ping and a TCP connect to port 6668 (Tuya local protocol) concurrently under a 1s context timeout; either succeeding means UP. `isUp` retries up to 3 times with 300ms gaps, so DOWN takes ~3.6s. Timing constants are at the top of `main.go`.
-- Ping shells out to the system `ping` binary rather than using raw sockets, so the runtime image needs `iputils` and the process can run as a non-root user. It has no `-W`: the context kills it instead, because `-W` is seconds on Linux but milliseconds on macOS.
+- Ping is implemented in Go with `golang.org/x/net/icmp` over an unprivileged `udp4` ICMP socket (no root, no `ping` binary). On Linux that depends on `net.ipv4.ping_group_range`, which Docker opens to all groups except under `network_mode: host`. If ping can't open its socket it logs and returns false; the TCP check still works.
+- The image is `FROM scratch` with only the static binary, running as `65534:65534`. Anything added at runtime (shell, curl, CA certs for TLS) must be copied in explicitly; there is no package manager. `.dockerignore` is an allowlist: only `go.mod`, `go.sum` and `*.go` reach the build context.
 
 ## Commands
 
@@ -28,6 +29,6 @@ There are no tests yet.
 ## Gotchas
 
 - Tuya devices allow only a few concurrent local connections; frequent polling or holding connections open can block other integrations.
-- The Go toolchain may not be on `PATH`; it is installed at `~/sdk/go1.25.6/bin`.
-- Naming is inconsistent: the Dockerfile builds the binary as `uptime-monitor` and the dev compose service/container is `uptime-monitor`, while the module, prod service, and published image are `ping-monitor`.
+- The Go toolchain may not be on `PATH`; it is installed at `~/sdk/go1.25.6/bin`. Keep `go.mod` at Go 1.25 to match the `golang:1.25` builder: newer `golang.org/x/net` releases (v0.59+) require Go 1.26, so use `GOTOOLCHAIN=local` when running `go get` to stop it bumping the `go` line.
+- The dev compose service/container is still named `uptime-monitor`; everything else (module, binary, prod service, published image) is `ping-monitor`.
 - Nothing in this repo builds or pushes the ghcr.io image; that happens outside the repo.

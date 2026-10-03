@@ -6,8 +6,11 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os/exec"
+	"os"
 	"time"
+
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -18,9 +21,52 @@ const (
 	retryDelay     = 300 * time.Millisecond
 )
 
-// ping relies on ctx for the timeout instead of -W, whose unit differs between Linux and macOS.
+// ping sends one ICMP echo over an unprivileged datagram socket, so it needs neither root
+// nor a ping binary. On Linux this requires the process's group to be in
+// net.ipv4.ping_group_range, which Docker allows for all groups by default.
 func ping(ctx context.Context, ip string) bool {
-	return exec.CommandContext(ctx, "ping", "-c", "1", ip).Run() == nil
+	addrs, err := net.DefaultResolver.LookupIP(ctx, "ip4", ip)
+	if err != nil || len(addrs) == 0 {
+		return false
+	}
+	dst := addrs[0]
+
+	conn, err := icmp.ListenPacket("udp4", "0.0.0.0")
+	if err != nil {
+		log.Printf("ping: cannot open ICMP socket: %v", err)
+		return false
+	}
+	defer conn.Close()
+	// Unblocks ReadFrom once ctx expires or the TCP check has already succeeded.
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	msg := icmp.Message{
+		Type: ipv4.ICMPTypeEcho,
+		Body: &icmp.Echo{ID: os.Getpid() & 0xffff, Seq: 1, Data: []byte("ping-monitor")},
+	}
+	b, err := msg.Marshal(nil)
+	if err != nil {
+		return false
+	}
+	if _, err := conn.WriteTo(b, &net.UDPAddr{IP: dst}); err != nil {
+		return false
+	}
+
+	buf := make([]byte, 1500)
+	for {
+		n, peer, err := conn.ReadFrom(buf)
+		if err != nil {
+			return false
+		}
+		reply, err := icmp.ParseMessage(ipv4.ICMPTypeEcho.Protocol(), buf[:n])
+		if err != nil || reply.Type != ipv4.ICMPTypeEchoReply {
+			continue
+		}
+		if udp, ok := peer.(*net.UDPAddr); ok && udp.IP.Equal(dst) {
+			return true
+		}
+	}
 }
 
 func tcpConnect(ctx context.Context, ip string) bool {
